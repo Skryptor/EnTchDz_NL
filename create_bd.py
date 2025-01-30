@@ -27,10 +27,11 @@ class UserProgress(Base):
     id = sq.Column(sq.Integer, primary_key=True, autoincrement=True)
     user_id = sq.Column(sq.Integer, sq.ForeignKey('users.user_id'), nullable=False)
     words_id = sq.Column(sq.Integer, sq.ForeignKey('words.words_id'), nullable=False)
-    status = sq.Column(sq.String(40), default=False)
+    is_learned = sq.Column(sq.Boolean, default=False)
 
-    user = relationship('User', back_populates= 'progress')
-    word = relationship('Word', back_populates= 'progress')
+    user = relationship('User', back_populates='progress')
+    word = relationship('Word', back_populates='progress')
+
 def create_tables(engine):
-    Base.metadata.drop_all(engine)
+    #Base.metadata.drop_all(engine)
     Base.metadata.create_all(engine)

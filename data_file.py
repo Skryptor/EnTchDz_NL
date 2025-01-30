@@ -1,8 +1,8 @@
 import sqlalchemy as sq
-from sqlalchemy import create_engine
+#from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 import configparser
-from create_bd import create_tables, User, Word, UserProgress
+from create_bd import create_tables, Word
 config = configparser.ConfigParser()
 config.read('settings.ini')
 password = config["password"]['password']

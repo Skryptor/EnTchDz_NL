@@ -23,48 +23,39 @@ class Command:
 
 bot = telebot.TeleBot(token)
 
-def search_user(user_id, user_name,chat_id):
-    """
-    Эта функция предназначена для проверки есть ли пользователь в БД и дальнейшем добавлении его,
-    она проверяет есть ли user с id, chat_id с совпадающим user_name в таблице User.
-    :param user_id:
-    :param user_name:
-    :param chat_id:
-    :return:
-    """
+def search_user(user_id, user_name, chat_id):
     user = session.query(User).filter_by(user_id=user_id).first()
     if not user:
-        new_user = User(user_name = user_name, chat_id = chat_id, user_id = user_id)
+        new_user = User(user_name=user_name, chat_id=chat_id, user_id=user_id)
         session.add(new_user)
         session.commit()
-        #print(f"✅ Пользователь {user_name} добавлен в БД")
-        bot.send_message(chat_id, f"✅ Пользователь {user_name} добавлен в БД чтобы начать напиши /go⬇️ если нужно остановиться пиши /stop")
-    else:
-        print(f"⚠️ Пользователь {user_name} уже есть в БД")
+        bot.send_message(chat_id, f"✅ Добро пожаловать, {user_name}! Чтобы начать, напиши /go⬇️")
+
 @bot.message_handler(commands=['start'])
 def start_bot(message):
     chat_id = message.chat.id
     bot.send_message(chat_id,
-                     'Привет 👋 Давай попрактикуемся в английском языке. Тренировки можешь проходить в удобном для себя темпе.')
+                     'Привет 👋 Давай попрактикуемся в английском языке. Тренировки можешь проходить в удобном для себя темпе /go.')
     search_user(message.from_user.id, message.from_user.username, message.chat.id)
-def create_progress(user_id, words_id, status="learned"):
-    """
-        Создаёт или обновляет прогресс пользователя по изучению слов.
 
-        :param user_id: ID пользователя в Telegram.
-        :param words_id: ID изучаемого слова в таблице Word.
-        :param status: Статус изучения слова (по умолчанию "learned").
-        :return: None
-        """
-    progress = session.query(UserProgress).filter_by(user_id=user_id, words_id=words_id).first()
+
+def create_progress(user_id, words_id):
+    progress = session.query(UserProgress).filter_by(
+        user_id=user_id,
+        words_id=words_id
+    ).first()
+
     if not progress:
-        new_progress = UserProgress(user_id=user_id, words_id=words_id, status=status)
+        new_progress = UserProgress(
+            user_id=user_id,
+            words_id=words_id,
+            is_learned=True
+        )
         session.add(new_progress)
     else:
-        progress.status = status
+        progress.is_learned = True  # Используем булево значение
 
     session.commit()
-    print(f"✅ Прогресс обновлён: Пользователь {user_id} выучил слово {words_id}")
 
 def random_word():
     """
@@ -95,9 +86,17 @@ def go_bot(message):
         bot.send_message(message.chat.id, "Словарь пуст. Добавьте слова командой 'add words'")
         return
 
-    all_progress = [i[0] for i in session.query(UserProgress.words_id).filter_by(user_id=message.from_user.id).all()]
+    #all_progress = [i[0] for i in session.query(UserProgress.words_id).filter_by(user_id=message.from_user.id).all()]
 
-    unlearned_words = [word for word in all_words if word.words_id not in all_progress]
+    unlearned_words = session.query(Word).filter(
+        ~Word.words_id.in_(
+            session.query(UserProgress.words_id)
+            .filter(
+                UserProgress.user_id == message.from_user.id,
+                UserProgress.is_learned == True  # Используем булево сравнение
+            )
+        )
+    ).all()
 
     if not unlearned_words:
         bot.send_message(message.chat.id, "🎉 Вы выучили все слова! Добавьте новые.")
@@ -236,9 +235,11 @@ def message_reply(message):
     elif message.text == 'next➡️':
         random_word()
         go_bot(message)
-    elif message.text == '/stop':
+    elif message.text == 'stop' or message.text == '/stop':
         bot.send_message(chat_id, 'До новых встреч')
     else:
+        if message.text == 'stop' or message.text == '/stop':
+            bot.send_message(chat_id, 'До новых встреч')
         bot.send_message(chat_id, '❌ Неправильно. Попробуйте еще раз!')
 
 
