@@ -15,8 +15,8 @@ class User(Base):
 class Word(Base):
     __tablename__ = 'words'
     words_id = sq.Column(sq.Integer, primary_key=True, autoincrement=True)
-    words_ru = sq.Column(sq.String(40), default=False)
-    words_en = sq.Column(sq.String(40), default=False)
+    words_ru = sq.Column(sq.String(40), nullable=False)
+    words_en = sq.Column(sq.String(40), nullable=False)
     user_id = sq.Column(sq.Integer, sq.ForeignKey('users.user_id'))
 
     progress = relationship('UserProgress', back_populates='word')

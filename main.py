@@ -18,7 +18,7 @@ session = Session()
 
 class Command:
     add_word = 'add words➕'
-    next = 'next'
+    next = 'next➡️'
     delete = 'delete🔙'
 
 bot = telebot.TeleBot(token)
@@ -82,28 +82,34 @@ user_data = {}
 @bot.message_handler(commands=['go'])
 def go_bot(message):
     """
-        Запускает процесс изучения слов. Показывает пользователю слово и варианты перевода.
+            Запускает процесс изучения слов. Показывает пользователю слово и варианты перевода.
 
-        :param message: Объект сообщения от пользователя.
-        :return: None
-        """
+            :param message: Объект сообщения от пользователя.
+            :return: None
+            """
     search_user(message.from_user.id, message.from_user.username, message.chat.id)
     markup = types.ReplyKeyboardMarkup(row_width=2)
 
-    word = random_word()
-    if not word:
+    all_words = session.query(Word).all()
+    if not all_words:
         bot.send_message(message.chat.id, "Словарь пуст. Добавьте слова командой 'add words'")
         return
 
     all_progress = [i[0] for i in session.query(UserProgress.words_id).filter_by(user_id=message.from_user.id).all()]
-    if word.words_id in all_progress:
-        go_bot(message)
+
+    unlearned_words = [word for word in all_words if word.words_id not in all_progress]
+
+    if not unlearned_words:
+        bot.send_message(message.chat.id, "🎉 Вы выучили все слова! Добавьте новые.")
         return
+
+    word = random.choice(unlearned_words)
 
     russian_word = word.words_ru
     first_word = word.words_en
-    all_words = session.query(Word.words_en).filter(Word.words_en != first_word).all()
-    ofter_words = random.sample([w[0] for w in all_words], min(3, len(all_words)))
+
+    all_words_en = [w.words_en for w in all_words if w.words_en != first_word]
+    ofter_words = random.sample(all_words_en, min(3, len(all_words_en)))
 
     first_value_btn = types.KeyboardButton(first_word)
     ofter_words_btn = [types.KeyboardButton(words) for words in ofter_words]
@@ -111,24 +117,20 @@ def go_bot(message):
     together = [first_value_btn] + ofter_words_btn
     random.shuffle(together)
 
-
     add_word_btn = types.KeyboardButton(Command.add_word)
     next_btn = types.KeyboardButton(Command.next)
     delete_btn = types.KeyboardButton(Command.delete)
 
-    together.extend([add_word_btn,next_btn,delete_btn])
-
+    together.extend([add_word_btn, next_btn, delete_btn])
     markup.add(*together)
 
     bot.send_message(message.chat.id, f'Слово для раздумий "{russian_word}"', reply_markup=markup)
-
-
 
     user_data[message.chat.id] = {
         'first_word': first_word,
         'word_id': word.words_id
     }
-@bot.message_handler(func=lambda message: message.text == 'add words')
+@bot.message_handler(func=lambda message: message.text == 'add words➕')
 def add_words(message):
     """
         Запрашивает у пользователя слово на русском языке для добавления в БД.
@@ -171,11 +173,11 @@ def create_en_word(message, ru_word, chat_id):
     new_word = Word(words_ru=ru_word, words_en=en_word, user_id=message.from_user.id)
     session.add(new_word)
     session.commit()
-    bot.send_message(chat_id, "✅ Слово добавлено!")
+    bot.send_message(chat_id, "✅ Слово добавлено! /go")
 
 
 
-@bot.message_handler(func=lambda message: message.text == 'delete')
+@bot.message_handler(func=lambda message: message.text == 'delete🔙')
 def learn_word(message):
     """
         Запрашивает у пользователя слово для удаления.
@@ -183,7 +185,9 @@ def learn_word(message):
         :param message: Объект сообщения от пользователя.
         :return: None
         """
-    msg = bot.send_message(message.chat.id, 'какое слово удалить,можно написать анг или ру')
+    msg = bot.send_message(message.chat.id, 'какое слово удалить,можно написать анг или ру, если передумал напиши "стоп')
+    if msg == 'стоп':# if user write stop, command stops
+        start_bot(message)
     bot.register_next_step_handler(msg, process_delete)
 
 def process_delete(message):
@@ -229,7 +233,7 @@ def message_reply(message):
         bot.send_message(chat_id, '✅ Правильно! Молодец!')
         random_word()
         go_bot(message)
-    elif message.text == 'next':
+    elif message.text == 'next➡️':
         random_word()
         go_bot(message)
     elif message.text == '/stop':
