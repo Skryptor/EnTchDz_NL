@@ -1,17 +1,32 @@
-#from sqlalchemy import delete
+"""
+Телеграм-бот для изучения английских слов.
+
+Пользователи могут добавлять слова, изучать их, отмечать прогресс.
+Слова хранятся в базе данных с разделением по пользователям и общим словам.
+
+Используемые таблицы:
+- User: информация о пользователях.
+- Word: слова (русский и английский вариант), связь с пользователем.
+- UserProgress: прогресс изучения слов пользователями.
+
+Основные команды:
+/start - начать работу с ботом.
+/go - начать тренировку.
+"""
+
+from sqlalchemy import or_, func
 from sqlalchemy.orm import sessionmaker
-from create_bd import  User, Word, UserProgress
+from create_bd import User, Word, UserProgress
 from data_file import engine
 import telebot
 import random
 import configparser
 from telebot import types
-#import requests
+
 config = configparser.ConfigParser()
 config.read('settings.ini')
 token = config["TOKEN"]['token']
-#token_yandex = config["TOKEN"]['token_yandex']
-#url = config["TOKEN"]['url']
+
 Session = sessionmaker(bind=engine)
 session = Session()
 
@@ -21,18 +36,30 @@ class Command:
     next = 'next➡️'
     delete = 'delete🔙'
 
+
 bot = telebot.TeleBot(token)
 
+
 def search_user(user_id, user_name, chat_id):
+    """
+    Проверяет наличие пользователя в БД и создает нового при необходимости.
+
+    :param user_id: ID пользователя в Telegram
+    :param user_name: Имя пользователя
+    :param chat_id: ID чата
+    """
     user = session.query(User).filter_by(user_id=user_id).first()
     if not user:
         new_user = User(user_name=user_name, chat_id=chat_id, user_id=user_id)
         session.add(new_user)
         session.commit()
-        bot.send_message(chat_id, f"✅ Добро пожаловать, {user_name}! Чтобы начать, напиши /go⬇️")
+
 
 @bot.message_handler(commands=['start'])
 def start_bot(message):
+    """
+    Обработчик команды /start. Регистрирует пользователя и приветствует.
+    """
     chat_id = message.chat.id
     bot.send_message(chat_id,
                      'Привет 👋 Давай попрактикуемся в английском языке. Тренировки можешь проходить в удобном для себя темпе /go.')
@@ -40,6 +67,12 @@ def start_bot(message):
 
 
 def create_progress(user_id, words_id):
+    """
+    Создает или обновляет запись о прогрессе изучения слова.
+
+    :param user_id: ID пользователя
+    :param words_id: ID слова
+    """
     progress = session.query(UserProgress).filter_by(
         user_id=user_id,
         words_id=words_id
@@ -53,209 +86,168 @@ def create_progress(user_id, words_id):
         )
         session.add(new_progress)
     else:
-        progress.is_learned = True  # Используем булево значение
-
+        progress.is_learned = True
     session.commit()
 
-def random_word():
-    """
-        Выбирает случайное слово из таблицы Word.
-
-        :return: Объект слова из БД или None, если слов нет.
-        """
-    words = session.query(Word).all()
-    if not words:
-        return None
-    return random.choice(words)
-
-user_data = {}
 
 @bot.message_handler(commands=['go'])
 def go_bot(message):
     """
-            Запускает процесс изучения слов. Показывает пользователю слово и варианты перевода.
-
-            :param message: Объект сообщения от пользователя.
-            :return: None
-            """
+    Запускает процесс тренировки, выводя слово и варианты перевода.
+    """
     search_user(message.from_user.id, message.from_user.username, message.chat.id)
-    markup = types.ReplyKeyboardMarkup(row_width=2)
 
-    all_words = session.query(Word).all()
-    if not all_words:
-        bot.send_message(message.chat.id, "Словарь пуст. Добавьте слова командой 'add words'")
-        return
-
-    #all_progress = [i[0] for i in session.query(UserProgress.words_id).filter_by(user_id=message.from_user.id).all()]
-
-    unlearned_words = session.query(Word).filter(
+    # Получаем случайное невыученное слово
+    unlearned_word = session.query(Word).filter(
         ~Word.words_id.in_(
             session.query(UserProgress.words_id)
             .filter(
                 UserProgress.user_id == message.from_user.id,
-                UserProgress.is_learned == True  # Используем булево сравнение
+                UserProgress.is_learned == True
             )
+        ),
+        or_(
+            Word.user_id == message.from_user.id,
+            Word.user_id == None
         )
-    ).all()
+    ).order_by(func.random()).first()
 
-    if not unlearned_words:
+    if not unlearned_word:
         bot.send_message(message.chat.id, "🎉 Вы выучили все слова! Добавьте новые.")
         return
 
-    word = random.choice(unlearned_words)
+    markup = types.ReplyKeyboardMarkup(row_width=2)
+    russian_word = unlearned_word.words_ru
+    correct_answer = unlearned_word.words_en
 
-    russian_word = word.words_ru
-    first_word = word.words_en
+    # Получаем варианты ответов
+    other_words = session.query(Word).filter(
+        or_(
+            Word.user_id == message.from_user.id,
+            Word.user_id == None
+        ),
+        Word.words_en != correct_answer
+    ).order_by(func.random()).limit(3).all()
 
-    all_words_en = [w.words_en for w in all_words if w.words_en != first_word]
-    ofter_words = random.sample(all_words_en, min(3, len(all_words_en)))
+    options = [word.words_en for word in other_words]
+    options.append(correct_answer)
+    random.shuffle(options)
 
-    first_value_btn = types.KeyboardButton(first_word)
-    ofter_words_btn = [types.KeyboardButton(words) for words in ofter_words]
+    # Создаем кнопки
+    buttons = [types.KeyboardButton(opt) for opt in options]
+    buttons.extend([
+        types.KeyboardButton(Command.add_word),
+        types.KeyboardButton(Command.next),
+        types.KeyboardButton(Command.delete)
+    ])
+    markup.add(*buttons)
 
-    together = [first_value_btn] + ofter_words_btn
-    random.shuffle(together)
-
-    add_word_btn = types.KeyboardButton(Command.add_word)
-    next_btn = types.KeyboardButton(Command.next)
-    delete_btn = types.KeyboardButton(Command.delete)
-
-    together.extend([add_word_btn, next_btn, delete_btn])
-    markup.add(*together)
-
-    bot.send_message(message.chat.id, f'Слово для раздумий "{russian_word}"', reply_markup=markup)
-
+    bot.send_message(message.chat.id, f'Слово для перевода: "{russian_word}"', reply_markup=markup)
     user_data[message.chat.id] = {
-        'first_word': first_word,
-        'word_id': word.words_id
+        'correct_answer': correct_answer,
+        'word_id': unlearned_word.words_id
     }
-@bot.message_handler(func=lambda message: message.text == 'add words➕')
+
+
+@bot.message_handler(func=lambda message: message.text == Command.add_word)
 def add_words(message):
     """
-        Запрашивает у пользователя слово на русском языке для добавления в БД.
-
-        :param message: Объект сообщения от пользователя.
-        :return: None
-        """
+    Инициирует процесс добавления нового слова.
+    """
     msg = bot.send_message(message.chat.id, "Введите слово на русском:")
-    bot.register_next_step_handler(msg, create_ru_word, message.chat.id)
+    bot.register_next_step_handler(msg, process_ru_word)
 
-def create_ru_word(message, chat_id):
+
+def process_ru_word(message):
     """
-        Получает русское слово от пользователя и запрашивает английский перевод.
-
-        :param message: Объект сообщения от пользователя.
-        :param chat_id: ID чата, в котором работает бот.
-        :return: None
-        """
+    Обрабатывает русское слово и запрашивает перевод.
+    """
     ru_word = message.text.strip()
-    msg = bot.send_message(chat_id, "Введите слово на английском:")
-    bot.register_next_step_handler(msg, create_en_word, ru_word, chat_id)
+    msg = bot.send_message(message.chat.id, "Введите перевод на английском:")
+    bot.register_next_step_handler(msg, process_en_word, ru_word)
 
-def create_en_word(message, ru_word, chat_id):
+
+def process_en_word(message, ru_word):
     """
-        Получает английское слово от пользователя и добавляет его в БД, если оно отсутствует.
-
-        :param message: Объект сообщения от пользователя.
-        :param ru_word: Русское слово, введённое пользователем.
-        :param chat_id: ID чата, в котором работает бот.
-        :return: None
-        """
+    Обрабатывает английское слово и сохраняет в БД.
+    """
     en_word = message.text.strip()
+
+    # Проверка на существование слова
     exists = session.query(Word).filter(
-        (Word.words_ru == ru_word) | (Word.words_en == en_word)
+        ((Word.words_ru == ru_word) | (Word.words_en == en_word)) &
+        (or_(Word.user_id == message.from_user.id, Word.user_id == None))
     ).first()
+
     if exists:
-        bot.send_message(message.chat.id, "⚠️ Такое слово уже есть в базе")
+        bot.send_message(message.chat.id, "⚠️ Такое слово уже существует!")
         return
 
-    new_word = Word(words_ru=ru_word, words_en=en_word, user_id=message.from_user.id)
+    new_word = Word(
+        words_ru=ru_word,
+        words_en=en_word,
+        user_id=message.from_user.id
+    )
     session.add(new_word)
     session.commit()
-    bot.send_message(chat_id, "✅ Слово добавлено! /go")
+    bot.send_message(message.chat.id, "✅ Слово успешно добавлено! /go")
 
 
-
-@bot.message_handler(func=lambda message: message.text == 'delete🔙')
-def learn_word(message):
+@bot.message_handler(func=lambda message: message.text == Command.delete)
+def handle_delete(message):
     """
-        Запрашивает у пользователя слово для удаления.
-
-        :param message: Объект сообщения от пользователя.
-        :return: None
-        """
-    msg = bot.send_message(message.chat.id, 'какое слово удалить,можно написать анг или ру, если передумал напиши "стоп')
-    if msg == 'стоп':# if user write stop, command stops
-        start_bot(message)
+    Инициирует процесс удаления слова.
+    """
+    msg = bot.send_message(message.chat.id, "Введите слово для удаления (рус/англ) или 'стоп' для отмены:")
     bot.register_next_step_handler(msg, process_delete)
+
 
 def process_delete(message):
     """
-        Удаляет указанное пользователем слово из БД, если оно существует.
+    Обрабатывает удаление слова из БД.
+    """
+    if message.text.lower() == 'стоп':
+        bot.send_message(message.chat.id, "❌ Удаление отменено.")
+        return
 
-        :param message: Объект сообщения от пользователя.
-        :return: None
-        """
-    word_to_delete = message.text.strip()
+    target = message.text.strip()
     word = session.query(Word).filter(
-        (Word.words_ru == word_to_delete) | (Word.words_en == word_to_delete)
+        ((Word.words_ru == target) | (Word.words_en == target)) &
+        (Word.user_id == message.from_user.id)
     ).first()
 
     if not word:
-        bot.send_message(message.chat.id, '⚠️ Такое слово не найдено в базе.')
+        bot.send_message(message.chat.id, "⚠️ Слово не найдено или нет прав для удаления!")
         return
 
     session.delete(word)
     session.commit()
-    bot.send_message(message.chat.id, f'✅ Слово "{word_to_delete}" удалено!')
+    bot.send_message(message.chat.id, f"✅ Слово '{target}' удалено!")
 
-@bot.message_handler(func=lambda message: True, content_types=['text'])
-def message_reply(message):
+
+@bot.message_handler(func=lambda message: True)
+def check_answer(message):
     """
-        Обрабатывает ответы пользователя. Проверяет правильность перевода, обновляет прогресс изучения.
-
-        :param message: Объект сообщения от пользователя.
-        :return: None
-        """
-
+    Проверяет ответ пользователя и обновляет прогресс.
+    """
     chat_id = message.chat.id
     if chat_id not in user_data:
-        bot.send_message(chat_id, "Сначала напиши команду /start")
+        bot.send_message(chat_id, "⚠️ Сначала начните тренировку командой /go")
         return
 
-    data = user_data[chat_id]
-    correct_word = data['first_word']
-    word_id = data['word_id']
+    user_answer = message.text
+    correct_data = user_data[chat_id]
 
-    if message.text == correct_word:
-        create_progress(message.from_user.id, word_id)
-        bot.send_message(chat_id, '✅ Правильно! Молодец!')
-        random_word()
-        go_bot(message)
-    elif message.text == 'next➡️':
-        random_word()
-        go_bot(message)
-    elif message.text == 'stop' or message.text == '/stop':
-        bot.send_message(chat_id, 'До новых встреч')
+    if user_answer == correct_data['correct_answer']:
+        create_progress(message.from_user.id, correct_data['word_id'])
+        bot.send_message(chat_id, "✅ Правильно! Молодец!")
     else:
-        if message.text == 'stop' or message.text == '/stop':
-            bot.send_message(chat_id, 'До новых встреч')
-        bot.send_message(chat_id, '❌ Неправильно. Попробуйте еще раз!')
+        bot.send_message(chat_id, "❌ Неправильно. Попробуйте еще раз!")
+
+    go_bot(message)
 
 
-if __name__ == '__main__': # ну тут документация наврятли нужна
-    print("Стартуем")
+if __name__ == '__main__':
+    user_data = {}
+    print("Бот запущен")
     bot.polling()
-
-    # params = {
-    #
-    #     'Authorization': token_yandex,
-    #     'lang': 'ru-en',
-    #     'text': ru_word,
-    #     'ui': 'ru'
-    # }
-    # responses = requests.get(url, params=params)
-    # if 200 <= responses.status_code < 300:
-    #     contents = responses.json()
-    #
-    #     trans_word = contents['def'][0]['tr'][0]['text'] норм работает но токен всего по 12ч
